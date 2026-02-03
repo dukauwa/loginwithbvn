@@ -103,6 +103,7 @@ const gameState = {
     particles: [],
     stars: [],
     tunnelBends: [],
+    tunnelRings: [], // Rings that fly toward player
     rushingRings: []
 };
 
@@ -195,73 +196,76 @@ document.getElementById('restart-btn').addEventListener('click', startGame);
 document.getElementById('resume-btn').addEventListener('click', togglePause);
 
 // ==================== TUNNEL GENERATION ====================
+const TUNNEL_DEPTH = 2000; // How far the tunnel extends
+const RING_SPACING = 50;   // Distance between rings
+const NUM_RINGS = 50;      // Number of rings in the tunnel
+
 function initializeTunnel() {
     gameState.tunnelBends = [];
-    for (let i = 0; i < CONFIG.tunnel.segments + 50; i++) {
-        gameState.tunnelBends.push({
-            x: 0,
-            y: 0,
-            radius: CONFIG.tunnel.baseRadius,
-            rotation: 0,
-            colorOffset: 0
-        });
+    gameState.tunnelRings = [];
+
+    // Create rings at evenly spaced z positions
+    for (let i = 0; i < NUM_RINGS; i++) {
+        gameState.tunnelRings.push(createTunnelRing(i * RING_SPACING + 100));
     }
 }
 
-function updateTunnelBends(deltaTime) {
-    const bendNoise = performance.now() * 0.0003;
-
-    for (let i = gameState.tunnelBends.length - 1; i > 0; i--) {
-        gameState.tunnelBends[i].x = gameState.tunnelBends[i - 1].x;
-        gameState.tunnelBends[i].y = gameState.tunnelBends[i - 1].y;
-        gameState.tunnelBends[i].radius = gameState.tunnelBends[i - 1].radius;
-        gameState.tunnelBends[i].rotation = gameState.tunnelBends[i - 1].rotation;
-        gameState.tunnelBends[i].colorOffset = gameState.tunnelBends[i - 1].colorOffset;
-    }
-
-    // Generate new bend at front
-    const bendStrength = CONFIG.tunnel.bendStrength * (1 + gameState.difficulty * 0.3);
-    const targetX = Math.sin(bendNoise * 2.3) * bendStrength * 100;
-    const targetY = Math.cos(bendNoise * 1.7) * bendStrength * 60;
-
-    gameState.tunnelBends[0].x = targetX;
-    gameState.tunnelBends[0].y = targetY;
-
-    // Dynamic radius (tunnel narrowing)
-    const radiusNoise = Math.sin(bendNoise * 3.1) * 0.5 + 0.5;
-    const minRadius = CONFIG.tunnel.minRadius + (CONFIG.tunnel.baseRadius - CONFIG.tunnel.minRadius) * (1 - gameState.difficulty * 0.3);
-    gameState.tunnelBends[0].radius = minRadius + radiusNoise * (CONFIG.tunnel.baseRadius - minRadius);
-
-    // Tunnel rotation
-    gameState.tunnelBends[0].rotation = Math.sin(bendNoise * 1.5) * 0.3;
-
-    // Color shifting
-    gameState.tunnelBends[0].colorOffset = (performance.now() * CONFIG.tunnel.colorShiftSpeed) % 1;
+function createTunnelRing(z) {
+    const noise = z * 0.002;
+    return {
+        z: z,
+        radius: CONFIG.tunnel.baseRadius + Math.sin(noise * 2) * 50,
+        rotation: Math.sin(noise) * 0.5,
+        offsetX: Math.sin(noise * 1.3) * 80,
+        offsetY: Math.cos(noise * 0.9) * 40,
+        hue: (z * 0.001) % 1,
+        thickness: 3 + Math.random() * 2
+    };
 }
 
-function getTunnelPosition(segmentIndex, angle) {
-    const bend = gameState.tunnelBends[segmentIndex] || gameState.tunnelBends[gameState.tunnelBends.length - 1];
-    const depth = segmentIndex * CONFIG.tunnel.segmentDepth;
-    const perspective = 1 / (1 + depth * 0.008);
+function updateTunnel(deltaTime) {
+    const speed = gameState.speed * gameState.timeScale * 20; // Forward speed
 
-    // Accumulate bends for proper curve
-    let accX = 0, accY = 0, accRotation = 0;
-    for (let i = 0; i <= segmentIndex && i < gameState.tunnelBends.length; i++) {
-        accX += gameState.tunnelBends[i].x * perspective;
-        accY += gameState.tunnelBends[i].y * perspective;
-        accRotation += gameState.tunnelBends[i].rotation * 0.1;
-    }
+    gameState.tunnelRings.forEach(ring => {
+        ring.z -= speed;
 
-    const adjustedAngle = angle + accRotation;
-    const radius = bend.radius * perspective;
+        // When ring passes camera, respawn it at the back
+        if (ring.z < -50) {
+            // Find the furthest ring
+            let maxZ = 0;
+            gameState.tunnelRings.forEach(r => {
+                if (r.z > maxZ) maxZ = r.z;
+            });
+
+            // Respawn behind the furthest ring
+            ring.z = maxZ + RING_SPACING;
+            const noise = ring.z * 0.002;
+            ring.radius = CONFIG.tunnel.baseRadius + Math.sin(noise * 2) * 50;
+            ring.rotation = Math.sin(noise) * 0.5;
+            ring.offsetX = Math.sin(noise * 1.3) * 80;
+            ring.offsetY = Math.cos(noise * 0.9) * 40;
+            ring.hue = (ring.z * 0.001 + gameState.colorPhase) % 1;
+        }
+    });
+}
+
+function getTunnelPosition(z, angle) {
+    // Find the ring closest to this z or interpolate
+    const perspective = 300 / (z + 300);
+    const noise = z * 0.002;
+
+    const offsetX = Math.sin(noise * 1.3) * 80 * perspective;
+    const offsetY = Math.cos(noise * 0.9) * 40 * perspective;
+    const rotation = Math.sin(noise) * 0.5;
+    const radius = (CONFIG.tunnel.baseRadius + Math.sin(noise * 2) * 50) * perspective;
+
+    const adjustedAngle = angle + rotation;
 
     return {
-        x: centerX + accX + Math.cos(adjustedAngle) * radius,
-        y: centerY + accY + Math.sin(adjustedAngle) * radius,
-        depth: depth,
+        x: centerX + offsetX + Math.cos(adjustedAngle) * radius,
+        y: centerY + offsetY + Math.sin(adjustedAngle) * radius,
         perspective: perspective,
-        radius: radius,
-        colorOffset: bend.colorOffset
+        radius: radius
     };
 }
 
@@ -288,25 +292,45 @@ function hexToRgb(hex) {
 function drawTunnel() {
     const palette = getCurrentPalette();
     const sides = CONFIG.tunnel.sides;
-    const segments = CONFIG.tunnel.segments;
 
-    // Draw from back to front
-    for (let seg = segments - 1; seg >= 0; seg--) {
-        const segmentProgress = seg / segments;
-        const nextSeg = seg + 1;
+    // Sort rings by z (far to near)
+    const sortedRings = [...gameState.tunnelRings].sort((a, b) => b.z - a.z);
 
+    // Draw tunnel walls connecting rings
+    for (let i = 0; i < sortedRings.length - 1; i++) {
+        const ring = sortedRings[i];
+        const nextRing = sortedRings[i + 1];
+
+        if (ring.z < 0 || ring.z > TUNNEL_DEPTH) continue;
+
+        const perspective1 = 300 / (ring.z + 300);
+        const perspective2 = 300 / (nextRing.z + 300);
+
+        if (perspective1 < 0.02) continue;
+
+        // Draw wall segments
         for (let side = 0; side < sides; side++) {
-            const angle1 = (side / sides) * Math.PI * 2;
-            const angle2 = ((side + 1) / sides) * Math.PI * 2;
+            const angle1 = (side / sides) * Math.PI * 2 + ring.rotation;
+            const angle2 = ((side + 1) / sides) * Math.PI * 2 + ring.rotation;
+            const nextAngle1 = (side / sides) * Math.PI * 2 + nextRing.rotation;
+            const nextAngle2 = ((side + 1) / sides) * Math.PI * 2 + nextRing.rotation;
 
-            const p1 = getTunnelPosition(seg, angle1);
-            const p2 = getTunnelPosition(seg, angle2);
-            const p3 = getTunnelPosition(nextSeg, angle2);
-            const p4 = getTunnelPosition(nextSeg, angle1);
+            const r1 = ring.radius * perspective1;
+            const r2 = nextRing.radius * perspective2;
 
-            // Color based on depth and position
-            const colorPhase = (gameState.colorPhase + segmentProgress + side / sides) % 1;
-            const brightness = Math.max(0.1, 1 - segmentProgress * 0.9);
+            const ox1 = ring.offsetX * perspective1;
+            const oy1 = ring.offsetY * perspective1;
+            const ox2 = nextRing.offsetX * perspective2;
+            const oy2 = nextRing.offsetY * perspective2;
+
+            const p1 = { x: centerX + ox1 + Math.cos(angle1) * r1, y: centerY + oy1 + Math.sin(angle1) * r1 };
+            const p2 = { x: centerX + ox1 + Math.cos(angle2) * r1, y: centerY + oy1 + Math.sin(angle2) * r1 };
+            const p3 = { x: centerX + ox2 + Math.cos(nextAngle2) * r2, y: centerY + oy2 + Math.sin(nextAngle2) * r2 };
+            const p4 = { x: centerX + ox2 + Math.cos(nextAngle1) * r2, y: centerY + oy2 + Math.sin(nextAngle1) * r2 };
+
+            // Color based on depth
+            const colorPhase = (gameState.colorPhase + ring.hue + side / sides) % 1;
+            const brightness = Math.min(1, perspective1 * 2);
 
             let color;
             if (colorPhase < 0.33) {
@@ -317,8 +341,8 @@ function drawTunnel() {
                 color = lerpColor(palette.accent, palette.primary, (colorPhase - 0.66) * 3);
             }
 
-            // Alternate panels for grid effect
-            const isHighlight = (seg + side) % 2 === 0;
+            const isHighlight = (i + side) % 2 === 0;
+            const alpha = brightness * (isHighlight ? 0.2 : 0.1);
 
             ctx.beginPath();
             ctx.moveTo(p1.x, p1.y);
@@ -326,38 +350,56 @@ function drawTunnel() {
             ctx.lineTo(p3.x, p3.y);
             ctx.lineTo(p4.x, p4.y);
             ctx.closePath();
-
-            // Fill with gradient
-            const alpha = brightness * (isHighlight ? 0.15 : 0.08);
             ctx.fillStyle = color.replace('rgb', 'rgba').replace(')', `, ${alpha})`);
             ctx.fill();
-
-            // Edge lines
-            if (seg % 3 === 0) {
-                ctx.strokeStyle = color.replace('rgb', 'rgba').replace(')', `, ${brightness * 0.4})`);
-                ctx.lineWidth = 1;
-                ctx.stroke();
-            }
-        }
-
-        // Ring lines at intervals
-        if (seg % 5 === 0) {
-            ctx.beginPath();
-            for (let side = 0; side <= sides; side++) {
-                const angle = (side / sides) * Math.PI * 2;
-                const p = getTunnelPosition(seg, angle);
-                if (side === 0) {
-                    ctx.moveTo(p.x, p.y);
-                } else {
-                    ctx.lineTo(p.x, p.y);
-                }
-            }
-            const ringBrightness = Math.max(0.2, 1 - segmentProgress * 0.8);
-            ctx.strokeStyle = `rgba(255, 255, 255, ${ringBrightness * 0.3})`;
-            ctx.lineWidth = 2;
-            ctx.stroke();
         }
     }
+
+    // Draw ring outlines (these create the "rushing" effect)
+    sortedRings.forEach(ring => {
+        if (ring.z < 0 || ring.z > TUNNEL_DEPTH) return;
+
+        const perspective = 300 / (ring.z + 300);
+        if (perspective < 0.02) return;
+
+        const radius = ring.radius * perspective;
+        const ox = ring.offsetX * perspective;
+        const oy = ring.offsetY * perspective;
+
+        // Ring brightness increases as it gets closer
+        const brightness = Math.min(1, perspective * 2.5);
+
+        // Draw the ring
+        ctx.beginPath();
+        for (let side = 0; side <= sides; side++) {
+            const angle = (side / sides) * Math.PI * 2 + ring.rotation;
+            const x = centerX + ox + Math.cos(angle) * radius;
+            const y = centerY + oy + Math.sin(angle) * radius;
+            if (side === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+
+        // Color based on hue
+        const colorPhase = (ring.hue + gameState.colorPhase) % 1;
+        let color;
+        if (colorPhase < 0.5) {
+            color = lerpColor(palette.primary, palette.secondary, colorPhase * 2);
+        } else {
+            color = lerpColor(palette.secondary, palette.primary, (colorPhase - 0.5) * 2);
+        }
+
+        ctx.strokeStyle = color.replace('rgb', 'rgba').replace(')', `, ${brightness * 0.8})`);
+        ctx.lineWidth = ring.thickness * perspective + 1;
+        ctx.stroke();
+
+        // Inner glow for closer rings
+        if (perspective > 0.3) {
+            ctx.strokeStyle = `rgba(255, 255, 255, ${(perspective - 0.3) * 0.5})`;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+    });
 }
 
 function drawStars() {
@@ -1127,7 +1169,6 @@ function startGame() {
     gameState.obstacles = [];
     gameState.powerUps = [];
     gameState.particles = [];
-    gameState.rushingRings = [];
 
     initializeTunnel();
 
@@ -1174,6 +1215,9 @@ function gameOver() {
     // Visual feedback
     flashScreen('#ff0066', 0.8);
     spawnCollisionParticles();
+
+    // Restart background animation
+    setTimeout(() => renderStartScreen(), 100);
 }
 
 function flashScreen(color, intensity) {
@@ -1253,11 +1297,10 @@ function update(deltaTime) {
     gameState.player.angle += (gameState.player.targetAngle - gameState.player.angle) * 0.15 * gameState.timeScale;
 
     // Update game systems
-    updateTunnelBends(deltaTime);
+    updateTunnel(deltaTime);
     updateObstacles(deltaTime);
     updatePowerUps(deltaTime);
     updateParticles(deltaTime);
-    updateRushingRings(deltaTime);
     checkCollisions();
 
     // Update score and difficulty
@@ -1305,7 +1348,6 @@ function render() {
     // Draw layers
     drawStars();
     drawTunnel();
-    drawRushingRings();
     drawObstacles();
     drawPowerUps();
     drawParticles();
@@ -1313,8 +1355,10 @@ function render() {
 
     ctx.restore();
 
-    // Speed lines effect
-    drawSpeedLines();
+    // Speed lines effect at high speeds
+    if (gameState.speed > 8) {
+        drawSpeedLines();
+    }
 }
 
 function drawSpeedLines() {
@@ -1347,71 +1391,31 @@ function drawSpeedLines() {
     ctx.restore();
 }
 
-// Rushing rings that zoom toward player
-function updateRushingRings(deltaTime) {
-    const speed = gameState.speed * gameState.timeScale;
-
-    // Update existing rings
-    gameState.rushingRings = gameState.rushingRings.filter(ring => {
-        ring.z -= speed * 15;
-        ring.life -= 0.01 * gameState.timeScale;
-        return ring.z > 0 && ring.life > 0;
-    });
-
-    // Spawn new rings
-    if (Math.random() < 0.15 * gameState.timeScale) {
-        gameState.rushingRings.push({
-            z: 1000,
-            life: 1,
-            hue: Math.random(),
-            thickness: 2 + Math.random() * 3
-        });
-    }
-}
-
-function drawRushingRings() {
-    const palette = getCurrentPalette();
-    const playerX = centerX + Math.sin(gameState.player.angle) * (canvas.width * 0.35);
-
-    gameState.rushingRings.forEach(ring => {
-        const perspective = 400 / ring.z;
-        const radius = CONFIG.tunnel.baseRadius * perspective * 1.5;
-
-        // Ring position interpolates from tunnel center to around player
-        const t = 1 - (ring.z / 1000);
-        const ringX = centerX + (playerX - centerX) * t * 0.3;
-        const ringY = centerY + (canvas.height * 0.5 - centerY) * t;
-
-        if (radius > 5 && radius < canvas.width) {
-            ctx.beginPath();
-            ctx.arc(ringX, ringY, radius, 0, Math.PI * 2);
-
-            const alpha = ring.life * Math.min(1, perspective * 2) * 0.6;
-            const color = ring.hue < 0.5 ? palette.primary : palette.secondary;
-
-            ctx.strokeStyle = color.replace('#', 'rgba(').replace(/([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})/i,
-                (m, r, g, b) => `${parseInt(r, 16)}, ${parseInt(g, 16)}, ${parseInt(b, 16)}, ${alpha})`);
-            ctx.lineWidth = ring.thickness * perspective;
-            ctx.stroke();
-        }
-    });
-}
-
 // ==================== INITIALIZATION ====================
 initializeTunnel();
 
-// Initial render for background
+// Initial render for background - slow tunnel animation on start screen
+let startScreenSpeed = 1;
 function renderStartScreen() {
+    if (gameState.running) return; // Stop when game starts
+
     ctx.fillStyle = '#050508';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    gameState.colorPhase += 0.0005;
-    drawStars();
+    gameState.colorPhase += 0.001;
 
-    // Slowly rotate tunnel for background effect
-    gameState.tunnelBends.forEach((bend, i) => {
-        bend.rotation = Math.sin(performance.now() * 0.0005 + i * 0.1) * 0.1;
+    // Animate tunnel slowly on start screen
+    gameState.tunnelRings.forEach(ring => {
+        ring.z -= startScreenSpeed;
+        if (ring.z < -50) {
+            let maxZ = 0;
+            gameState.tunnelRings.forEach(r => { if (r.z > maxZ) maxZ = r.z; });
+            ring.z = maxZ + RING_SPACING;
+            ring.hue = (ring.z * 0.001 + gameState.colorPhase) % 1;
+        }
     });
+
+    drawStars();
     drawTunnel();
 
     requestAnimationFrame(renderStartScreen);
