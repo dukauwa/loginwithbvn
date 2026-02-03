@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VORTEX RUNNER - Tunnel Racing Game</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+
+        <!-- Start Screen -->
+        <div id="start-screen" class="screen">
+            <div class="title-container">
+                <h1 class="game-title">VORTEX</h1>
+                <h2 class="game-subtitle">RUNNER</h2>
+            </div>
+            <div class="tagline">Race through the infinite dream</div>
+            <button id="start-btn" class="neon-btn">
+                <span>ENTER THE VORTEX</span>
+            </button>
+            <div class="controls-hint">
+                <p>← → or A/D to move</p>
+                <p>SPACE to activate power-up</p>
+            </div>
+        </div>
+
+        <!-- Game UI -->
+        <div id="game-ui" class="hidden">
+            <div id="score-container">
+                <div class="score-label">DISTANCE</div>
+                <div id="score">0</div>
+            </div>
+            <div id="multiplier-container" class="hidden">
+                <span id="multiplier">x2</span>
+            </div>
+            <div id="speed-indicator">
+                <div class="speed-label">VELOCITY</div>
+                <div id="speed-bar">
+                    <div id="speed-fill"></div>
+                </div>
+            </div>
+            <div id="power-up-slot" class="hidden">
+                <div id="power-up-icon"></div>
+                <div id="power-up-name"></div>
+            </div>
+            <div id="shield-indicator" class="hidden">
+                <div class="shield-icon">◈</div>
+                <span>SHIELD</span>
+            </div>
+        </div>
+
+        <!-- Pause Screen -->
+        <div id="pause-screen" class="screen hidden">
+            <h2>PAUSED</h2>
+            <button id="resume-btn" class="neon-btn">
+                <span>RESUME</span>
+            </button>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="gameover-screen" class="screen hidden">
+            <h2 class="gameover-title">VOID CONSUMED</h2>
+            <div class="final-score-container">
+                <div class="score-row">
+                    <span class="label">DISTANCE</span>
+                    <span id="final-score" class="value">0</span>
+                </div>
+                <div class="score-row">
+                    <span class="label">BEST</span>
+                    <span id="high-score" class="value">0</span>
+                </div>
+            </div>
+            <button id="restart-btn" class="neon-btn">
+                <span>RE-ENTER</span>
+            </button>
+        </div>
+
+        <!-- Visual Effects Layer -->
+        <div id="effects-layer">
+            <div id="flash-overlay"></div>
+            <div id="slowmo-overlay" class="hidden"></div>
+            <div id="warp-lines"></div>
+        </div>
+    </div>
+
+    <script src="game.js"></script>
+</body>
+</html>
