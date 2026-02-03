@@ -26,10 +26,10 @@ const CONFIG = {
 
     // Game settings
     game: {
-        baseSpeed: 8,
-        maxSpeed: 28,
-        speedIncrement: 0.0015,
-        obstacleSpawnRate: 0.025,
+        baseSpeed: 3,
+        maxSpeed: 18,
+        speedIncrement: 0.001,
+        obstacleSpawnRate: 0.02,
         powerUpSpawnRate: 0.008,
         difficultyScaleRate: 0.0001
     },
@@ -102,19 +102,21 @@ const gameState = {
     powerUps: [],
     particles: [],
     stars: [],
-    tunnelBends: []
+    tunnelBends: [],
+    rushingRings: []
 };
 
 // ==================== CANVAS SETUP ====================
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
-let centerX, centerY;
+let centerX, centerY, tunnelCenterY;
 
 function resizeCanvas() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
     centerX = canvas.width / 2;
-    centerY = canvas.height / 2;
+    centerY = canvas.height * 0.35; // Tunnel vanishing point higher up
+    tunnelCenterY = canvas.height * 0.35;
 }
 
 window.addEventListener('resize', resizeCanvas);
@@ -362,9 +364,9 @@ function drawStars() {
     if (gameState.stars.length < CONFIG.visual.starCount) {
         for (let i = gameState.stars.length; i < CONFIG.visual.starCount; i++) {
             gameState.stars.push({
-                x: Math.random() * canvas.width,
-                y: Math.random() * canvas.height,
-                z: Math.random() * 1000,
+                x: (Math.random() - 0.5) * canvas.width * 2,
+                y: (Math.random() - 0.5) * canvas.height * 2,
+                z: Math.random() * 1500,
                 size: Math.random() * 2 + 0.5
             });
         }
@@ -373,35 +375,42 @@ function drawStars() {
     const palette = getCurrentPalette();
 
     gameState.stars.forEach(star => {
-        star.z -= gameState.speed * gameState.timeScale * 2;
+        star.z -= gameState.speed * gameState.timeScale * 8;
         if (star.z <= 0) {
-            star.z = 1000;
-            star.x = Math.random() * canvas.width;
-            star.y = Math.random() * canvas.height;
+            star.z = 1500;
+            star.x = (Math.random() - 0.5) * canvas.width * 2;
+            star.y = (Math.random() - 0.5) * canvas.height * 2;
         }
 
-        const perspective = 500 / star.z;
-        const screenX = centerX + (star.x - centerX) * perspective;
-        const screenY = centerY + (star.y - centerY) * perspective;
+        const perspective = 600 / star.z;
+        const screenX = centerX + star.x * perspective;
+        const screenY = centerY + star.y * perspective;
         const size = star.size * perspective;
 
-        if (screenX > 0 && screenX < canvas.width && screenY > 0 && screenY < canvas.height) {
-            const alpha = Math.min(1, perspective * 0.5);
+        if (screenX > -50 && screenX < canvas.width + 50 && screenY > -50 && screenY < canvas.height + 50) {
+            const alpha = Math.min(1, perspective * 0.7);
+
+            // Streak effect - always on, intensity based on speed
+            const streakLength = 5 + gameState.speed * 2;
+            const streakEndX = screenX + star.x * 0.01 * streakLength;
+            const streakEndY = screenY + star.y * 0.01 * streakLength;
+
             ctx.beginPath();
-            ctx.arc(screenX, screenY, size, 0, Math.PI * 2);
+            ctx.moveTo(screenX, screenY);
+            ctx.lineTo(streakEndX, streakEndY);
+
+            const streakGrad = ctx.createLinearGradient(screenX, screenY, streakEndX, streakEndY);
+            streakGrad.addColorStop(0, `rgba(255, 255, 255, ${alpha})`);
+            streakGrad.addColorStop(1, `rgba(255, 255, 255, 0)`);
+            ctx.strokeStyle = streakGrad;
+            ctx.lineWidth = size;
+            ctx.stroke();
+
+            // Star point
+            ctx.beginPath();
+            ctx.arc(screenX, screenY, size * 0.8, 0, Math.PI * 2);
             ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
             ctx.fill();
-
-            // Streak effect at high speed
-            if (gameState.speed > 15) {
-                const streakLength = (gameState.speed - 15) * 0.5;
-                ctx.beginPath();
-                ctx.moveTo(screenX, screenY);
-                ctx.lineTo(screenX, screenY + streakLength * perspective);
-                ctx.strokeStyle = `rgba(255, 255, 255, ${alpha * 0.5})`;
-                ctx.lineWidth = size * 0.5;
-                ctx.stroke();
-            }
         }
     });
 }
@@ -410,11 +419,12 @@ function drawPlayer() {
     const palette = getCurrentPalette();
     const player = gameState.player;
 
-    // Get player position in tunnel
-    const pos = getTunnelPosition(2, player.angle);
-    const playerX = pos.x;
-    const playerY = pos.y;
-    const size = CONFIG.player.size;
+    // Player is at bottom center of screen, position based on angle
+    const playerBaseY = canvas.height * 0.85;
+    const lateralRange = canvas.width * 0.35;
+    const playerX = centerX + Math.sin(player.angle) * lateralRange;
+    const playerY = playerBaseY - Math.abs(Math.sin(player.angle)) * 30; // Slight arc
+    const size = CONFIG.player.size * 1.5;
 
     // Apply screen shake
     const shakeX = (Math.random() - 0.5) * gameState.screenShake;
@@ -422,7 +432,10 @@ function drawPlayer() {
 
     ctx.save();
     ctx.translate(playerX + shakeX, playerY + shakeY);
-    ctx.rotate(player.angle + Math.PI / 2);
+
+    // Tilt based on movement
+    const tilt = player.angle * 0.3;
+    ctx.rotate(tilt);
 
     // Shield effect
     if (player.hasShield) {
@@ -449,12 +462,14 @@ function drawPlayer() {
         return;
     }
 
-    // Player ship body
+    // Draw ship from behind/above perspective (triangle pointing into screen)
     ctx.beginPath();
-    ctx.moveTo(0, -size);
-    ctx.lineTo(-size * 0.7, size * 0.8);
-    ctx.lineTo(0, size * 0.4);
-    ctx.lineTo(size * 0.7, size * 0.8);
+    ctx.moveTo(0, -size * 0.8); // Nose (pointing up/forward)
+    ctx.lineTo(-size, size * 0.6); // Left wing
+    ctx.lineTo(-size * 0.3, size * 0.3);
+    ctx.lineTo(0, size * 0.8); // Tail
+    ctx.lineTo(size * 0.3, size * 0.3);
+    ctx.lineTo(size, size * 0.6); // Right wing
     ctx.closePath();
 
     // Gradient fill
@@ -466,7 +481,7 @@ function drawPlayer() {
 
     // Glow
     ctx.shadowColor = palette.primary;
-    ctx.shadowBlur = 20;
+    ctx.shadowBlur = 25;
     ctx.fill();
     ctx.shadowBlur = 0;
 
@@ -475,13 +490,32 @@ function drawPlayer() {
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // Engine glow
+    // Cockpit
     ctx.beginPath();
-    ctx.moveTo(-size * 0.3, size * 0.5);
-    ctx.lineTo(0, size * 1.2 + Math.random() * 5);
-    ctx.lineTo(size * 0.3, size * 0.5);
-    ctx.fillStyle = `rgba(255, ${150 + Math.random() * 100}, 0, 0.8)`;
+    ctx.ellipse(0, -size * 0.2, size * 0.25, size * 0.35, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0, 200, 255, 0.6)';
     ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Engine trails (going backward/down into the tunnel)
+    const trailLength = 20 + gameState.speed * 3;
+    for (let i = 0; i < 2; i++) {
+        const offsetX = (i === 0 ? -1 : 1) * size * 0.4;
+        ctx.beginPath();
+        ctx.moveTo(offsetX, size * 0.4);
+        ctx.lineTo(offsetX - 3, size * 0.4 + trailLength + Math.random() * 10);
+        ctx.lineTo(offsetX + 3, size * 0.4 + trailLength + Math.random() * 10);
+        ctx.closePath();
+
+        const trailGrad = ctx.createLinearGradient(0, size * 0.4, 0, size * 0.4 + trailLength);
+        trailGrad.addColorStop(0, 'rgba(255, 200, 50, 0.9)');
+        trailGrad.addColorStop(0.5, 'rgba(255, 100, 0, 0.6)');
+        trailGrad.addColorStop(1, 'rgba(255, 50, 0, 0)');
+        ctx.fillStyle = trailGrad;
+        ctx.fill();
+    }
 
     ctx.restore();
 }
@@ -561,127 +595,202 @@ function updateObstacles(deltaTime) {
 
 function drawObstacles() {
     const palette = getCurrentPalette();
+    const playerX = centerX + Math.sin(gameState.player.angle) * (canvas.width * 0.35);
+    const playerY = canvas.height * 0.85;
 
-    gameState.obstacles.forEach(obstacle => {
+    // Sort by depth (far to near)
+    const sorted = [...gameState.obstacles].sort((a, b) => b.segmentIndex - a.segmentIndex);
+
+    sorted.forEach(obstacle => {
         if (obstacle.segmentIndex < 0 || obstacle.segmentIndex >= CONFIG.tunnel.segments) return;
 
-        const segIndex = Math.floor(obstacle.segmentIndex);
-        const perspective = 1 / (1 + obstacle.segmentIndex * CONFIG.tunnel.segmentDepth * 0.008);
+        // Calculate perspective based on segment
+        const t = 1 - (obstacle.segmentIndex / CONFIG.tunnel.segments);
+        const perspective = Math.pow(t, 1.5);
+
+        // Position interpolates from tunnel center toward player area
+        const obstacleLateral = Math.sin(obstacle.angle);
+        const startX = centerX + obstacleLateral * CONFIG.tunnel.baseRadius * 0.3;
+        const endX = centerX + obstacleLateral * (canvas.width * 0.4);
+        const obsX = startX + (endX - startX) * t;
+
+        const startY = centerY;
+        const endY = playerY - 80;
+        const obsY = startY + (endY - startY) * t;
 
         switch (obstacle.type) {
             case OBSTACLE_TYPES.STATIC:
             case OBSTACLE_TYPES.ROTATING:
             case OBSTACLE_TYPES.MOVING:
-                drawBlockObstacle(obstacle, segIndex, perspective, palette);
+                drawBlockObstacle(obstacle, obsX, obsY, perspective, palette);
                 break;
             case OBSTACLE_TYPES.GATE:
-                drawGateObstacle(obstacle, segIndex, perspective, palette);
+                drawGateObstacle(obstacle, obsX, obsY, perspective, palette);
                 break;
             case OBSTACLE_TYPES.LASER:
-                drawLaserObstacle(obstacle, segIndex, perspective, palette);
+                drawLaserObstacle(obstacle, obsX, obsY, perspective, palette);
                 break;
         }
     });
 }
 
-function drawBlockObstacle(obstacle, segIndex, perspective, palette) {
-    const pos = getTunnelPosition(segIndex, obstacle.angle);
-    const size = obstacle.size * perspective;
+function drawBlockObstacle(obstacle, obsX, obsY, perspective, palette) {
+    const size = (obstacle.size * 1.5) * Math.max(0.2, perspective);
 
     ctx.save();
-    ctx.translate(pos.x, pos.y);
+    ctx.translate(obsX, obsY);
 
     // Outer glow
     ctx.beginPath();
-    ctx.arc(0, 0, size * 1.5, 0, Math.PI * 2);
-    const glowGrad = ctx.createRadialGradient(0, 0, size * 0.5, 0, 0, size * 1.5);
-    glowGrad.addColorStop(0, obstacle.color.replace(')', ', 0.5)').replace('rgb', 'rgba'));
+    ctx.arc(0, 0, size * 1.8, 0, Math.PI * 2);
+    const glowGrad = ctx.createRadialGradient(0, 0, size * 0.3, 0, 0, size * 1.8);
+    glowGrad.addColorStop(0, 'rgba(255, 50, 100, 0.8)');
+    glowGrad.addColorStop(0.5, 'rgba(255, 50, 100, 0.3)');
     glowGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
     ctx.fillStyle = glowGrad;
     ctx.fill();
 
-    // Main body
+    // Main body - hexagon
     ctx.beginPath();
     const sides = 6;
     for (let i = 0; i < sides; i++) {
-        const angle = (i / sides) * Math.PI * 2 + performance.now() * 0.001;
+        const angle = (i / sides) * Math.PI * 2 + performance.now() * 0.002;
         const x = Math.cos(angle) * size;
         const y = Math.sin(angle) * size;
         if (i === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
     }
     ctx.closePath();
-    ctx.fillStyle = obstacle.color;
+
+    const obsGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, size);
+    obsGrad.addColorStop(0, '#ff3366');
+    obsGrad.addColorStop(1, '#cc0044');
+    ctx.fillStyle = obsGrad;
     ctx.fill();
+
     ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2 * perspective;
+    ctx.lineWidth = Math.max(1, 3 * perspective);
+    ctx.stroke();
+
+    // Inner detail
+    ctx.beginPath();
+    for (let i = 0; i < sides; i++) {
+        const angle = (i / sides) * Math.PI * 2 + performance.now() * 0.002;
+        const x = Math.cos(angle) * size * 0.5;
+        const y = Math.sin(angle) * size * 0.5;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.lineWidth = 1;
     ctx.stroke();
 
     ctx.restore();
 }
 
-function drawGateObstacle(obstacle, segIndex, perspective, palette) {
-    const sides = 32;
-    const gapStart = obstacle.gapAngle;
-    const gapEnd = obstacle.gapAngle + obstacle.gapSize;
+function drawGateObstacle(obstacle, obsX, obsY, perspective, palette) {
+    const t = perspective;
+    const width = canvas.width * 0.8 * Math.max(0.1, t);
+    const height = 60 * Math.max(0.2, t);
 
-    ctx.beginPath();
+    // Gap position
+    const gapCenterNorm = Math.sin(obstacle.gapAngle + obstacle.gapSize / 2);
+    const gapWidth = width * (obstacle.gapSize / Math.PI) * 0.8;
+    const gapX = obsX + gapCenterNorm * (width * 0.4);
 
-    for (let i = 0; i < sides; i++) {
-        const angle = (i / sides) * Math.PI * 2;
-        const nextAngle = ((i + 1) / sides) * Math.PI * 2;
+    ctx.save();
 
-        // Check if this segment is in the gap
-        const inGap = (angle >= gapStart && angle <= gapEnd) ||
-                     (angle + Math.PI * 2 >= gapStart && angle + Math.PI * 2 <= gapEnd) ||
-                     (angle >= gapStart - Math.PI * 2 && angle <= gapEnd - Math.PI * 2);
-
-        if (inGap) continue;
-
-        const p1 = getTunnelPosition(segIndex, angle);
-        const p2 = getTunnelPosition(segIndex, nextAngle);
-        const p3 = getTunnelPosition(segIndex + 1, nextAngle);
-        const p4 = getTunnelPosition(segIndex + 1, angle);
-
+    // Left barrier
+    const leftWidth = (gapX - gapWidth / 2) - (obsX - width / 2);
+    if (leftWidth > 0) {
         ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
-        ctx.lineTo(p3.x, p3.y);
-        ctx.lineTo(p4.x, p4.y);
-        ctx.closePath();
-
-        ctx.fillStyle = `rgba(255, 0, 100, ${0.7 * perspective})`;
+        ctx.rect(obsX - width / 2, obsY - height / 2, leftWidth, height);
+        const leftGrad = ctx.createLinearGradient(obsX - width / 2, 0, gapX - gapWidth / 2, 0);
+        leftGrad.addColorStop(0, 'rgba(255, 0, 100, 0.9)');
+        leftGrad.addColorStop(1, 'rgba(255, 50, 150, 0.9)');
+        ctx.fillStyle = leftGrad;
         ctx.fill();
-        ctx.strokeStyle = `rgba(255, 100, 150, ${perspective})`;
+        ctx.strokeStyle = `rgba(255, 150, 200, ${t})`;
         ctx.lineWidth = 2;
         ctx.stroke();
     }
+
+    // Right barrier
+    const rightStart = gapX + gapWidth / 2;
+    const rightWidth = (obsX + width / 2) - rightStart;
+    if (rightWidth > 0) {
+        ctx.beginPath();
+        ctx.rect(rightStart, obsY - height / 2, rightWidth, height);
+        const rightGrad = ctx.createLinearGradient(rightStart, 0, obsX + width / 2, 0);
+        rightGrad.addColorStop(0, 'rgba(255, 50, 150, 0.9)');
+        rightGrad.addColorStop(1, 'rgba(255, 0, 100, 0.9)');
+        ctx.fillStyle = rightGrad;
+        ctx.fill();
+        ctx.strokeStyle = `rgba(255, 150, 200, ${t})`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
+
+    // Gap glow
+    ctx.beginPath();
+    ctx.rect(gapX - gapWidth / 2 + 5, obsY - height / 2, gapWidth - 10, height);
+    ctx.strokeStyle = `rgba(0, 255, 136, ${t * 0.8})`;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    ctx.restore();
 }
 
-function drawLaserObstacle(obstacle, segIndex, perspective, palette) {
+function drawLaserObstacle(obstacle, obsX, obsY, perspective, palette) {
     if (!obstacle.active) return;
 
-    const startPos = getTunnelPosition(segIndex, obstacle.laserAngle);
-    const endPos = getTunnelPosition(segIndex, obstacle.laserAngle + Math.PI);
+    const t = Math.max(0.2, perspective);
+    const width = canvas.width * 0.7 * t;
 
-    // Laser beam
+    // Laser sweeps across based on angle
+    const laserAngle = obstacle.laserAngle + performance.now() * 0.001;
+
+    ctx.save();
+    ctx.translate(obsX, obsY);
+    ctx.rotate(Math.sin(laserAngle) * 0.3);
+
+    // Outer glow
     ctx.beginPath();
-    ctx.moveTo(startPos.x, startPos.y);
-    ctx.lineTo(endPos.x, endPos.y);
-
-    ctx.strokeStyle = `rgba(255, 50, 50, ${0.9 * perspective})`;
-    ctx.lineWidth = 4 * perspective;
+    ctx.moveTo(-width / 2, 0);
+    ctx.lineTo(width / 2, 0);
+    ctx.strokeStyle = `rgba(255, 50, 50, ${0.3 * t})`;
+    ctx.lineWidth = 20 * t;
     ctx.stroke();
 
-    // Glow
-    ctx.strokeStyle = `rgba(255, 100, 100, ${0.4 * perspective})`;
-    ctx.lineWidth = 12 * perspective;
+    // Middle glow
+    ctx.beginPath();
+    ctx.moveTo(-width / 2, 0);
+    ctx.lineTo(width / 2, 0);
+    ctx.strokeStyle = `rgba(255, 100, 100, ${0.6 * t})`;
+    ctx.lineWidth = 8 * t;
     ctx.stroke();
 
-    // Core
-    ctx.strokeStyle = `rgba(255, 255, 255, ${0.8 * perspective})`;
-    ctx.lineWidth = 2 * perspective;
+    // Core beam
+    ctx.beginPath();
+    ctx.moveTo(-width / 2, 0);
+    ctx.lineTo(width / 2, 0);
+    ctx.strokeStyle = `rgba(255, 200, 200, ${0.9 * t})`;
+    ctx.lineWidth = 3 * t;
     ctx.stroke();
+
+    // Emitter nodes at ends
+    for (const x of [-width / 2, width / 2]) {
+        ctx.beginPath();
+        ctx.arc(x, 0, 8 * t, 0, Math.PI * 2);
+        ctx.fillStyle = '#ff3333';
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
+
+    ctx.restore();
 }
 
 // ==================== POWER-UPS ====================
@@ -723,29 +832,45 @@ function updatePowerUps(deltaTime) {
 }
 
 function drawPowerUps() {
+    const playerY = canvas.height * 0.85;
+
     gameState.powerUps.forEach(powerUp => {
         if (powerUp.segmentIndex < 0 || powerUp.segmentIndex >= CONFIG.tunnel.segments) return;
 
-        const segIndex = Math.floor(powerUp.segmentIndex);
-        const bobOffset = Math.sin(powerUp.bobPhase) * 0.1;
-        const pos = getTunnelPosition(segIndex, powerUp.angle + bobOffset);
-        const perspective = 1 / (1 + powerUp.segmentIndex * CONFIG.tunnel.segmentDepth * 0.008);
-        const size = 20 * perspective;
+        // Calculate position rushing toward player
+        const t = 1 - (powerUp.segmentIndex / CONFIG.tunnel.segments);
+        const perspective = Math.pow(t, 1.5);
+
+        const powerUpLateral = Math.sin(powerUp.angle);
+        const startX = centerX + powerUpLateral * CONFIG.tunnel.baseRadius * 0.3;
+        const endX = centerX + powerUpLateral * (canvas.width * 0.4);
+        const posX = startX + (endX - startX) * t;
+
+        const startY = centerY;
+        const endY = playerY - 80;
+        const posY = startY + (endY - startY) * t;
+
+        // Bob effect
+        const bobOffset = Math.sin(powerUp.bobPhase) * 5 * perspective;
+
+        const size = 25 * Math.max(0.3, perspective);
 
         ctx.save();
-        ctx.translate(pos.x, pos.y);
+        ctx.translate(posX, posY + bobOffset);
 
         // Outer ring
         ctx.beginPath();
         ctx.arc(0, 0, size * 1.5, 0, Math.PI * 2);
         ctx.strokeStyle = powerUp.color;
-        ctx.lineWidth = 2 * perspective;
+        ctx.lineWidth = Math.max(1, 3 * perspective);
         ctx.stroke();
 
         // Pulsing glow
-        const pulseSize = size * (1.5 + Math.sin(performance.now() * 0.005) * 0.3);
-        const glowGrad = ctx.createRadialGradient(0, 0, size * 0.5, 0, 0, pulseSize);
-        glowGrad.addColorStop(0, powerUp.color.replace(')', ', 0.8)').replace('#', 'rgba(').replace(/([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})/i, (m, r, g, b) => `${parseInt(r, 16)}, ${parseInt(g, 16)}, ${parseInt(b, 16)}`));
+        const pulseSize = size * (1.8 + Math.sin(performance.now() * 0.005) * 0.3);
+        const rgb = hexToRgb(powerUp.color);
+        const glowGrad = ctx.createRadialGradient(0, 0, size * 0.3, 0, 0, pulseSize);
+        glowGrad.addColorStop(0, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.9)`);
+        glowGrad.addColorStop(0.5, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.4)`);
         glowGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
 
         ctx.beginPath();
@@ -753,12 +878,21 @@ function drawPowerUps() {
         ctx.fillStyle = glowGrad;
         ctx.fill();
 
+        // Background circle
+        ctx.beginPath();
+        ctx.arc(0, 0, size, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(0, 0, 0, 0.5)`;
+        ctx.fill();
+
         // Icon
-        ctx.font = `bold ${size}px Orbitron, sans-serif`;
+        ctx.font = `bold ${size * 0.8}px Orbitron, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillStyle = '#ffffff';
-        ctx.fillText(powerUp.icon, 0, 0);
+        ctx.shadowColor = powerUp.color;
+        ctx.shadowBlur = 10;
+        ctx.fillText(powerUp.icon, 0, 2);
+        ctx.shadowBlur = 0;
 
         ctx.restore();
     });
@@ -816,34 +950,40 @@ function activatePowerUp() {
 
 // ==================== PARTICLES ====================
 function spawnCollectParticles(powerUp) {
-    const pos = getTunnelPosition(Math.floor(powerUp.segmentIndex), powerUp.angle);
+    const playerX = centerX + Math.sin(gameState.player.angle) * (canvas.width * 0.35);
+    const playerY = canvas.height * 0.85;
 
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 25; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 3 + Math.random() * 10;
         gameState.particles.push({
-            x: pos.x,
-            y: pos.y,
-            vx: (Math.random() - 0.5) * 10,
-            vy: (Math.random() - 0.5) * 10,
+            x: playerX,
+            y: playerY - 40,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
             life: 1,
             decay: 0.02 + Math.random() * 0.02,
-            size: 3 + Math.random() * 4,
+            size: 3 + Math.random() * 5,
             color: powerUp.color
         });
     }
 }
 
 function spawnCollisionParticles() {
-    const pos = getTunnelPosition(2, gameState.player.angle);
+    const playerX = centerX + Math.sin(gameState.player.angle) * (canvas.width * 0.35);
+    const playerY = canvas.height * 0.85;
 
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 40; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 5 + Math.random() * 15;
         gameState.particles.push({
-            x: pos.x,
-            y: pos.y,
-            vx: (Math.random() - 0.5) * 15,
-            vy: (Math.random() - 0.5) * 15,
+            x: playerX,
+            y: playerY,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed - 5,
             life: 1,
             decay: 0.015 + Math.random() * 0.02,
-            size: 4 + Math.random() * 6,
+            size: 4 + Math.random() * 8,
             color: '#ff0066'
         });
     }
@@ -872,42 +1012,46 @@ function drawParticles() {
 // ==================== COLLISION DETECTION ====================
 function checkCollisions() {
     const playerAngle = gameState.player.angle;
-    const playerSegment = 2;
+    const collisionSegment = 3; // When obstacles reach this segment, check collision
     const hitRadius = CONFIG.player.hitboxRadius;
+
+    // Player lateral position (normalized -1 to 1)
+    const playerLateral = Math.sin(playerAngle);
 
     // Check obstacles
     for (const obstacle of gameState.obstacles) {
-        if (Math.abs(obstacle.segmentIndex - playerSegment) > 2) continue;
+        if (obstacle.segmentIndex > collisionSegment + 2 || obstacle.segmentIndex < collisionSegment - 1) continue;
 
         let collision = false;
+
+        // Obstacle lateral position
+        const obstacleLateral = Math.sin(obstacle.angle);
 
         switch (obstacle.type) {
             case OBSTACLE_TYPES.STATIC:
             case OBSTACLE_TYPES.ROTATING:
             case OBSTACLE_TYPES.MOVING:
-                const angleDiff = Math.abs(normalizeAngle(playerAngle - obstacle.angle));
-                const collisionAngle = (obstacle.size / CONFIG.tunnel.baseRadius) + (hitRadius / CONFIG.tunnel.baseRadius);
-                collision = angleDiff < collisionAngle && Math.abs(obstacle.segmentIndex - playerSegment) < 1.5;
+                const lateralDiff = Math.abs(playerLateral - obstacleLateral);
+                const collisionThreshold = 0.35 + (obstacle.size / CONFIG.tunnel.baseRadius);
+                collision = lateralDiff < collisionThreshold && obstacle.segmentIndex < collisionSegment + 0.5 && obstacle.segmentIndex > collisionSegment - 1;
                 break;
 
             case OBSTACLE_TYPES.GATE:
-                const gapStart = obstacle.gapAngle;
-                const gapEnd = obstacle.gapAngle + obstacle.gapSize;
-                const normPlayerAngle = normalizeAngle(playerAngle);
-                const inGap = (normPlayerAngle >= gapStart - 0.2 && normPlayerAngle <= gapEnd + 0.2) ||
-                             (normPlayerAngle + Math.PI * 2 >= gapStart - 0.2 && normPlayerAngle + Math.PI * 2 <= gapEnd + 0.2);
-                collision = !inGap && Math.abs(obstacle.segmentIndex - playerSegment) < 1;
+                const gapCenterAngle = obstacle.gapAngle + obstacle.gapSize / 2;
+                const gapLateral = Math.sin(gapCenterAngle);
+                const gapWidth = obstacle.gapSize / Math.PI; // Normalized gap width
+                const distFromGap = Math.abs(playerLateral - gapLateral);
+                collision = distFromGap > gapWidth * 0.8 && obstacle.segmentIndex < collisionSegment + 0.5 && obstacle.segmentIndex > collisionSegment - 1;
                 break;
 
             case OBSTACLE_TYPES.LASER:
                 if (!obstacle.active) break;
-                const laserAngle1 = normalizeAngle(obstacle.laserAngle);
-                const laserAngle2 = normalizeAngle(obstacle.laserAngle + Math.PI);
-                const playerNorm = normalizeAngle(playerAngle);
-                const laserCollisionThreshold = 0.15;
-                collision = (Math.abs(normalizeAngle(playerNorm - laserAngle1)) < laserCollisionThreshold ||
-                           Math.abs(normalizeAngle(playerNorm - laserAngle2)) < laserCollisionThreshold) &&
-                           Math.abs(obstacle.segmentIndex - playerSegment) < 1;
+                const laserLateral1 = Math.sin(obstacle.laserAngle);
+                const laserLateral2 = Math.sin(obstacle.laserAngle + Math.PI);
+                const laserThreshold = 0.2;
+                collision = (Math.abs(playerLateral - laserLateral1) < laserThreshold ||
+                           Math.abs(playerLateral - laserLateral2) < laserThreshold) &&
+                           obstacle.segmentIndex < collisionSegment + 0.5 && obstacle.segmentIndex > collisionSegment - 1;
                 break;
         }
 
@@ -920,10 +1064,11 @@ function checkCollisions() {
     // Check power-ups
     for (const powerUp of gameState.powerUps) {
         if (powerUp.collected) continue;
-        if (Math.abs(powerUp.segmentIndex - playerSegment) > 1.5) continue;
+        if (powerUp.segmentIndex > collisionSegment + 1.5 || powerUp.segmentIndex < collisionSegment - 1) continue;
 
-        const angleDiff = Math.abs(normalizeAngle(playerAngle - powerUp.angle));
-        if (angleDiff < 0.4 && Math.abs(powerUp.segmentIndex - playerSegment) < 1) {
+        const powerUpLateral = Math.sin(powerUp.angle);
+        const lateralDiff = Math.abs(playerLateral - powerUpLateral);
+        if (lateralDiff < 0.4 && powerUp.segmentIndex < collisionSegment + 1 && powerUp.segmentIndex > collisionSegment - 1) {
             collectPowerUp(powerUp);
         }
     }
@@ -982,6 +1127,7 @@ function startGame() {
     gameState.obstacles = [];
     gameState.powerUps = [];
     gameState.particles = [];
+    gameState.rushingRings = [];
 
     initializeTunnel();
 
@@ -1111,6 +1257,7 @@ function update(deltaTime) {
     updateObstacles(deltaTime);
     updatePowerUps(deltaTime);
     updateParticles(deltaTime);
+    updateRushingRings(deltaTime);
     checkCollisions();
 
     // Update score and difficulty
@@ -1138,7 +1285,7 @@ function update(deltaTime) {
     UI.speedFill.style.width = `${((gameState.speed - CONFIG.game.baseSpeed) / (CONFIG.game.maxSpeed - CONFIG.game.baseSpeed)) * 100}%`;
 
     // Warp lines at high speed
-    UI.warpLines.style.opacity = Math.max(0, (gameState.speed - 15) / 13);
+    UI.warpLines.style.opacity = Math.max(0, (gameState.speed - 10) / 10);
 }
 
 function render() {
@@ -1158,30 +1305,31 @@ function render() {
     // Draw layers
     drawStars();
     drawTunnel();
+    drawRushingRings();
     drawObstacles();
     drawPowerUps();
-    drawPlayer();
     drawParticles();
+    drawPlayer(); // Player on top
 
     ctx.restore();
 
-    // Speed lines effect at high speeds
-    if (gameState.speed > 18) {
-        drawSpeedLines();
-    }
+    // Speed lines effect
+    drawSpeedLines();
 }
 
 function drawSpeedLines() {
-    const intensity = (gameState.speed - 18) / 10;
-    const lineCount = Math.floor(intensity * 30);
+    const intensity = (gameState.speed - 12) / 8;
+    if (intensity <= 0) return;
+
+    const lineCount = Math.floor(intensity * 40);
 
     ctx.save();
-    ctx.globalAlpha = intensity * 0.3;
+    ctx.globalAlpha = Math.min(0.5, intensity * 0.4);
 
     for (let i = 0; i < lineCount; i++) {
         const angle = Math.random() * Math.PI * 2;
-        const startRadius = 50 + Math.random() * 100;
-        const endRadius = startRadius + 100 + Math.random() * 200;
+        const startRadius = 30 + Math.random() * 80;
+        const endRadius = startRadius + 150 + Math.random() * 300;
 
         const startX = centerX + Math.cos(angle) * startRadius;
         const startY = centerY + Math.sin(angle) * startRadius;
@@ -1191,12 +1339,62 @@ function drawSpeedLines() {
         ctx.beginPath();
         ctx.moveTo(startX, startY);
         ctx.lineTo(endX, endY);
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1;
+        ctx.strokeStyle = getCurrentPalette().primary;
+        ctx.lineWidth = 1 + Math.random();
         ctx.stroke();
     }
 
     ctx.restore();
+}
+
+// Rushing rings that zoom toward player
+function updateRushingRings(deltaTime) {
+    const speed = gameState.speed * gameState.timeScale;
+
+    // Update existing rings
+    gameState.rushingRings = gameState.rushingRings.filter(ring => {
+        ring.z -= speed * 15;
+        ring.life -= 0.01 * gameState.timeScale;
+        return ring.z > 0 && ring.life > 0;
+    });
+
+    // Spawn new rings
+    if (Math.random() < 0.15 * gameState.timeScale) {
+        gameState.rushingRings.push({
+            z: 1000,
+            life: 1,
+            hue: Math.random(),
+            thickness: 2 + Math.random() * 3
+        });
+    }
+}
+
+function drawRushingRings() {
+    const palette = getCurrentPalette();
+    const playerX = centerX + Math.sin(gameState.player.angle) * (canvas.width * 0.35);
+
+    gameState.rushingRings.forEach(ring => {
+        const perspective = 400 / ring.z;
+        const radius = CONFIG.tunnel.baseRadius * perspective * 1.5;
+
+        // Ring position interpolates from tunnel center to around player
+        const t = 1 - (ring.z / 1000);
+        const ringX = centerX + (playerX - centerX) * t * 0.3;
+        const ringY = centerY + (canvas.height * 0.5 - centerY) * t;
+
+        if (radius > 5 && radius < canvas.width) {
+            ctx.beginPath();
+            ctx.arc(ringX, ringY, radius, 0, Math.PI * 2);
+
+            const alpha = ring.life * Math.min(1, perspective * 2) * 0.6;
+            const color = ring.hue < 0.5 ? palette.primary : palette.secondary;
+
+            ctx.strokeStyle = color.replace('#', 'rgba(').replace(/([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})/i,
+                (m, r, g, b) => `${parseInt(r, 16)}, ${parseInt(g, 16)}, ${parseInt(b, 16)}, ${alpha})`);
+            ctx.lineWidth = ring.thickness * perspective;
+            ctx.stroke();
+        }
+    });
 }
 
 // ==================== INITIALIZATION ====================
